@@ -27,6 +27,8 @@ import { dataProvider } from '@/dataProvider'
 import { Login } from '@/pages/Login'
 import { DashboardPage } from '@/pages/Dashboard'
 import { CreateUserPage } from '@/pages/CreateUser'
+import { UsersPage } from '@/pages/Users'
+import { GroupsPage } from '@/pages/Groups'
 import { SubjectsPage } from '@/pages/Subjects'
 import { SchedulePage } from '@/pages/Schedule'
 
@@ -40,7 +42,8 @@ function App() {
         routerProvider={routerBindings}
         resources={[
           { name: 'dashboard', list: '/', meta: { label: 'Главная' } },
-          { name: 'users', list: '/users/create', create: '/users/create', meta: { label: 'Создать пользователя' } },
+          { name: 'users', list: '/users', create: '/users/create', meta: { label: 'Пользователи' } },
+          { name: 'groups', list: '/groups', create: '/groups', meta: { label: 'Группы' } },
           { name: 'subjects', list: '/subjects', meta: { label: 'Предметы' } },
           { name: 'schedule', list: '/schedule', meta: { label: 'Расписание' } },
         ]}
@@ -58,7 +61,9 @@ function App() {
             }
           >
             <Route index element={<DashboardPage />} />
+            <Route path="/users" element={<UsersPage />} />
             <Route path="/users/create" element={<CreateUserPage />} />
+            <Route path="/groups" element={<GroupsPage />} />
             <Route path="/subjects" element={<SubjectsPage />} />
             <Route path="/schedule" element={<SchedulePage />} />
           </Route>

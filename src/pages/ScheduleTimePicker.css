@@ -1,0 +1,32 @@
+/* Компактный выпадающий список TimePicker: только часы 8–18, без отступов */
+
+/* Панель времени и контейнер — без отступов */
+.schedule-time-picker-dropdown .rc-picker-time-panel,
+.ant-picker-dropdown.schedule-time-picker-dropdown .rc-picker-time-panel {
+  padding: 0;
+  margin: 0;
+}
+
+.schedule-time-picker-dropdown .rc-picker-time-panel .rc-picker-content,
+.ant-picker-dropdown.schedule-time-picker-dropdown .rc-picker-time-panel .rc-picker-content {
+  max-height: 240px;
+  align-items: flex-start;
+  padding: 0;
+  margin: 0;
+}
+
+/* Убираем все отступы у колонок часов и минут */
+.schedule-time-picker-dropdown .rc-picker-time-panel-column,
+.ant-picker-dropdown.schedule-time-picker-dropdown .rc-picker-time-panel-column {
+  padding: 0 !important;
+  margin: 0 !important;
+  flex: none;
+}
+
+.schedule-time-picker-dropdown .rc-picker-time-panel-column:hover,
+.ant-picker-dropdown.schedule-time-picker-dropdown .rc-picker-time-panel-column:hover {
+  overflow-y: auto;
+}
+.ant-picker-time-panel-column::after {
+  display: none !important;
+}

@@ -1,16 +1,20 @@
 import { useState, useMemo } from 'react'
-import { useList } from '@refinedev/core'
+import { useList, useCreate, useUpdate, useDelete } from '@refinedev/core'
 import { List, useTable } from '@refinedev/antd'
-import { Table, Button, Input, Select, Space, message } from 'antd'
-import type { SubjectListItem, ClassRoom, Teacher } from '@/types/api'
+import { Table, Button, Input, Select, Space, Modal, Form, message } from 'antd'
+import { FilterOutlined } from '@ant-design/icons'
+import { GroupIdsDropdown } from '@/components/GroupIdsDropdown'
+import type { SubjectListItem, Group, Teacher } from '@/types/api'
 
 type DraftSubject = {
   id: string
   _isNew: true
   name: string
-  classRoomId?: string
+  groupIds?: string[]
+  groupId?: string
   teacherId?: string
-  classRoom?: ClassRoom
+  group?: Group
+  groups?: Group[]
   teacher?: Teacher
 }
 
@@ -25,34 +29,45 @@ function teacherLabel(t: Teacher) {
 }
 
 export function SubjectsPage() {
-  const { tableProps } = useTable<SubjectListItem>({
+  const { tableProps, tableQueryResult } = useTable<SubjectListItem>({
     resource: 'subjects',
     syncWithLocation: true,
   })
+  const createMutation = useCreate()
+  const updateMutation = useUpdate()
+  const deleteMutation = useDelete()
 
   const [newRows, setNewRows] = useState<DraftSubject[]>([])
   const [modified, setModified] = useState<
-    Record<string, { name?: string; classRoomId?: string; teacherId?: string }>
+    Record<string, { name?: string; groupIds?: string[]; groupId?: string; teacherId?: string }>
   >({})
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set())
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
-  const [editClassRoomId, setEditClassRoomId] = useState<string | undefined>()
+  const [editGroupIds, setEditGroupIds] = useState<string[]>([])
   const [editTeacherId, setEditTeacherId] = useState<string | undefined>()
+
+  const [filterModalOpen, setFilterModalOpen] = useState(false)
+  const [filterName, setFilterName] = useState<string | null>(null)
+  const [filterCourse, setFilterCourse] = useState<number | null>(null)
+  const [filterTeacherId, setFilterTeacherId] = useState<string | null>(null)
 
   const serverList = (tableProps.dataSource ?? []) as SubjectListItem[]
 
   const { data: teachersFromApi } = useList<Teacher>({
     resource: 'teachers',
   })
+  const { data: groupsFromApi } = useList<Group>({ resource: 'groups' })
 
-  const classRooms = useMemo(() => {
-    const map = new Map<string, ClassRoom>()
+  const groups = useMemo(() => {
+    const fromApi = groupsFromApi?.data ?? []
+    if (fromApi.length > 0) return fromApi
+    const map = new Map<string, Group>()
     serverList.forEach((s) => {
-      if (s.classRoom?.id) map.set(s.classRoom.id, s.classRoom)
+      if (s.group?.id) map.set(s.group.id, s.group)
     })
     return Array.from(map.values())
-  }, [serverList])
+  }, [serverList, groupsFromApi?.data])
 
   const teachers = useMemo(() => {
     const fromApi = teachersFromApi?.data ?? []
@@ -64,17 +79,64 @@ export function SubjectsPage() {
     return Array.from(map.values())
   }, [serverList, teachersFromApi?.data])
 
-  const displayList: SubjectRow[] = [
+  const subjectNameOptions = useMemo(() => {
+    const names = new Set<string>()
+    serverList.forEach((s) => s.name?.trim() && names.add(s.name.trim()))
+    newRows.forEach((r) => r.name?.trim() && names.add(r.name.trim()))
+    return Array.from(names).sort()
+  }, [serverList, newRows])
+
+  const courseOptions = [1, 2, 3, 4]
+
+  const baseDisplayList: SubjectRow[] = [
     ...serverList.filter((r) => !deletedIds.has(r.id)),
     ...newRows,
   ]
 
+  const displayList = useMemo(() => {
+    let list = baseDisplayList
+    if (filterName != null && filterName !== '') {
+      list = list.filter((row) => (modified[row.id]?.name ?? (row as SubjectListItem).name ?? (row as DraftSubject).name ?? '').trim() === filterName)
+    }
+    if (filterCourse != null) {
+      list = list.filter((row) => {
+        const mod = modified[row.id]
+        let course: number | undefined
+        if (mod?.groupIds?.length) course = groups.find((g) => g.id === mod.groupIds![0])?.course
+        else if (mod?.groupId) course = groups.find((g) => g.id === mod.groupId)?.course
+        else if ((row as SubjectListItem).group?.course != null) course = (row as SubjectListItem).group!.course
+        else if ((row as SubjectListItem).group?.id) course = groups.find((g) => g.id === (row as SubjectListItem).group!.id)?.course
+        else if ((row as DraftSubject).groupIds?.length) course = groups.find((g) => g.id === (row as DraftSubject).groupIds![0])?.course
+        else if ((row as DraftSubject).group?.course != null) course = (row as DraftSubject).group!.course
+        else if ((row as DraftSubject).group?.id) course = groups.find((g) => g.id === (row as DraftSubject).group!.id)?.course
+        return course === filterCourse
+      })
+    }
+    if (filterTeacherId != null && filterTeacherId !== '') {
+      list = list.filter((row) => {
+        const tid = modified[row.id]?.teacherId ?? (row as SubjectListItem).teacherId ?? (row as SubjectListItem).teacher?.id ?? (row as DraftSubject).teacherId ?? (row as DraftSubject).teacher?.id
+        return tid === filterTeacherId
+      })
+    }
+    return list
+  }, [baseDisplayList, filterName, filterCourse, filterTeacherId, modified, groups])
+
+  const hasActiveFilters = filterName != null || filterCourse != null || (filterTeacherId != null && filterTeacherId !== '')
+
   const hasChanges = newRows.length > 0 || Object.keys(modified).length > 0 || deletedIds.size > 0
 
-  const getDisplayClassRoom = (row: SubjectRow) => {
+  const getDisplayGroup = (row: SubjectRow) => {
     const mod = modified[row.id]
-    if (mod?.classRoomId) return classRooms.find((c) => c.id === mod.classRoomId)?.name
-    return row.classRoom?.name ?? (row as SubjectListItem).classRoom?.name
+    if (mod?.groupIds?.length) {
+      return mod.groupIds.map((id) => groups.find((g) => g.id === id)?.name).filter(Boolean).join(', ')
+    }
+    if (mod?.groupId) return groups.find((g) => g.id === mod.groupId)?.name
+    const draft = row as DraftSubject
+    if (draft.groupIds?.length) {
+      return draft.groupIds.map((id) => groups.find((g) => g.id === id)?.name).filter(Boolean).join(', ')
+    }
+    if (draft.groups?.length) return draft.groups.map((g) => g.name).join(', ')
+    return row.group?.name ?? (row as SubjectListItem).group?.name
   }
 
   const getDisplayTeacher = (row: SubjectRow) => {
@@ -96,7 +158,7 @@ export function SubjectsPage() {
     setNewRows((prev) => [...prev, draft])
     setEditingId(draft.id)
     setEditName('')
-    setEditClassRoomId(undefined)
+    setEditGroupIds([])
     setEditTeacherId(undefined)
   }
 
@@ -104,8 +166,12 @@ export function SubjectsPage() {
     setEditingId(row.id)
     const mod = modified[row.id]
     setEditName(mod?.name ?? row.name ?? '')
-    setEditClassRoomId(
-      mod?.classRoomId ?? row.classRoom?.id ?? (row as SubjectListItem).classRoomId
+    const draft = row as DraftSubject
+    setEditGroupIds(
+      mod?.groupIds ??
+        (mod?.groupId ? [mod.groupId] : null) ??
+        draft.groupIds ??
+        (draft.group?.id ? [draft.group.id] : (row as SubjectListItem).groupId ? [(row as SubjectListItem).groupId] : [])
     )
     setEditTeacherId(
       mod?.teacherId ?? row.teacher?.id ?? (row as SubjectListItem).teacherId
@@ -115,7 +181,7 @@ export function SubjectsPage() {
   const handleSaveEdit = () => {
     if (!editingId) return
     const isNew = newRows.some((r) => r.id === editingId)
-    const classRoom = classRooms.find((c) => c.id === editClassRoomId)
+    const selectedGroups = groups.filter((g) => editGroupIds.includes(g.id))
     const teacher = teachers.find((t) => t.id === editTeacherId)
     if (isNew) {
       setNewRows((prev) =>
@@ -124,9 +190,9 @@ export function SubjectsPage() {
             ? {
                 ...r,
                 name: editName,
-                classRoomId: editClassRoomId,
+                groupIds: editGroupIds,
                 teacherId: editTeacherId,
-                classRoom,
+                groups: selectedGroups,
                 teacher,
               }
             : r
@@ -137,21 +203,21 @@ export function SubjectsPage() {
         ...prev,
         [editingId]: {
           name: editName,
-          classRoomId: editClassRoomId,
+          groupIds: editGroupIds,
           teacherId: editTeacherId,
         },
       }))
     }
     setEditingId(null)
     setEditName('')
-    setEditClassRoomId(undefined)
+    setEditGroupIds([])
     setEditTeacherId(undefined)
   }
 
   const handleCancelEdit = () => {
     setEditingId(null)
     setEditName('')
-    setEditClassRoomId(undefined)
+    setEditGroupIds([])
     setEditTeacherId(undefined)
   }
 
@@ -163,10 +229,78 @@ export function SubjectsPage() {
     }
   }
 
-  const handleSave = () => {
-    message.info(
-      'В текущей версии API создание и изменение предметов не предусмотрено. Предметы и классы заданы в системе.'
-    )
+  const runMutation = (
+    fn: (opts: { onSuccess: () => void; onError: (e: unknown) => void }) => void
+  ) =>
+    new Promise<void>((resolve, reject) => {
+      fn({
+        onSuccess: () => resolve(),
+        onError: (e) => reject(e),
+      })
+    })
+
+  const handleSave = async () => {
+    try {
+      for (const id of deletedIds) {
+        await runMutation(({ onSuccess, onError }) =>
+          deleteMutation.mutate(
+            { resource: 'subjects', id },
+            { onSuccess: () => onSuccess(), onError }
+          )
+        )
+      }
+      for (const [id, mod] of Object.entries(modified)) {
+        const groupIds = mod.groupIds ?? (mod.groupId ? [mod.groupId] : [])
+        const name = mod.name?.trim()
+        const teacherId = mod.teacherId
+        if (!name || !teacherId || groupIds.length === 0) continue
+        if (groupIds.length === 1) {
+          await runMutation(({ onSuccess, onError }) =>
+            updateMutation.mutate(
+              { resource: 'subjects', id, values: { name, groupId: groupIds[0], teacherId } },
+              { onSuccess: () => onSuccess(), onError }
+            )
+          )
+        } else {
+          await runMutation(({ onSuccess, onError }) =>
+            deleteMutation.mutate(
+              { resource: 'subjects', id },
+              { onSuccess: () => onSuccess(), onError }
+            )
+          )
+          for (const groupId of groupIds) {
+            await runMutation(({ onSuccess, onError }) =>
+              createMutation.mutate(
+                { resource: 'subjects', values: { name, groupId, teacherId } },
+                { onSuccess: () => onSuccess(), onError }
+              )
+            )
+          }
+        }
+      }
+      for (const row of newRows) {
+        const name = row.name?.trim()
+        const teacherId = row.teacherId
+        const groupIds = row.groupIds ?? (row.groupId ? [row.groupId] : [])
+        if (!name || !teacherId || groupIds.length === 0) continue
+        for (const groupId of groupIds) {
+          await runMutation(({ onSuccess, onError }) =>
+            createMutation.mutate(
+              { resource: 'subjects', values: { name, groupId, teacherId } },
+              { onSuccess: () => onSuccess(), onError }
+            )
+          )
+        }
+      }
+      setNewRows([])
+      setModified({})
+      setDeletedIds(new Set())
+      tableQueryResult?.refetch()
+      message.success('Изменения сохранены')
+    } catch (e: unknown) {
+      const msg = (e as any)?.response?.data?.message ?? 'Ошибка при сохранении'
+      message.error(msg)
+    }
   }
 
   const isEditing = (row: SubjectRow) => editingId === row.id
@@ -176,11 +310,27 @@ export function SubjectsPage() {
       title="Предметы"
       headerButtons={
         <>
+          <Button
+            icon={<FilterOutlined />}
+            onClick={() => setFilterModalOpen(true)}
+            type={hasActiveFilters ? 'primary' : 'default'}
+          >
+            Фильтры
+            {hasActiveFilters && ' (вкл.)'}
+          </Button>
           <Button type="primary" onClick={handleAdd}>
             Добавить
           </Button>
           {hasChanges && (
-            <Button type="primary" onClick={handleSave}>
+            <Button
+              type="primary"
+              onClick={handleSave}
+              loading={
+                createMutation.isLoading ||
+                updateMutation.isLoading ||
+                deleteMutation.isLoading
+              }
+            >
               Сохранить
             </Button>
           )}
@@ -212,20 +362,19 @@ export function SubjectsPage() {
               ),
           },
           {
-            title: 'Группа',
-            key: 'classRoom',
+            title: 'Группы',
+            key: 'group',
             render: (_, row) =>
               isEditing(row) ? (
-                <Select
-                  value={editClassRoomId}
-                  onChange={setEditClassRoomId}
-                  placeholder="Группа"
-                  allowClear
-                  style={{ width: 120 }}
-                  options={classRooms.map((c) => ({ value: c.id, label: c.name }))}
+                <GroupIdsDropdown
+                  groups={groups}
+                  value={editGroupIds}
+                  onChange={setEditGroupIds}
+                  placeholder="Группы (несколько)"
+                  style={{ minWidth: 200 }}
                 />
               ) : (
-                getDisplayClassRoom(row) ?? '—'
+                getDisplayGroup(row) ?? '—'
               ),
           },
           {
@@ -279,6 +428,55 @@ export function SubjectsPage() {
           },
         ]}
       />
+
+      <Modal
+        title="Фильтры"
+        open={filterModalOpen}
+        onCancel={() => setFilterModalOpen(false)}
+        footer={[
+          <Button key="reset" onClick={() => { setFilterName(null); setFilterCourse(null); setFilterTeacherId(null); setFilterModalOpen(false); }}>
+            Сбросить
+          </Button>,
+          <Button key="apply" type="primary" onClick={() => setFilterModalOpen(false)}>
+            Применить
+          </Button>,
+        ]}
+      >
+        <Form layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item label="Название предмета">
+            <Select
+              placeholder="Все предметы"
+              allowClear
+              value={filterName ?? undefined}
+              onChange={(v) => setFilterName(v ?? null)}
+              options={subjectNameOptions.map((n) => ({ value: n, label: n }))}
+              style={{ width: '100%' }}
+            />
+          </Form.Item>
+          <Form.Item label="По курсу">
+            <Select
+              placeholder="Все курсы"
+              allowClear
+              value={filterCourse ?? undefined}
+              onChange={(v) => setFilterCourse(v ?? null)}
+              options={courseOptions.map((c) => ({ value: c, label: `${c} курс` }))}
+              style={{ width: '100%' }}
+            />
+          </Form.Item>
+          <Form.Item label="По учителю">
+            <Select
+              placeholder="Все учителя"
+              allowClear
+              value={filterTeacherId ?? undefined}
+              onChange={(v) => setFilterTeacherId(v ?? null)}
+              options={teachers.map((t) => ({ value: t.id, label: teacherLabel(t) }))}
+              style={{ width: '100%' }}
+              showSearch
+              optionFilterProp="label"
+            />
+          </Form.Item>
+        </Form>
+      </Modal>
     </List>
   )
 }

@@ -14,12 +14,29 @@ export interface User {
   lastName: string
   middleName?: string
   login: string
-  classRoom?: ClassRoom
+  groupId?: string
+  /** В ответах GET /users и GET /users/me у студента приходит объект группы */
+  group?: Group
+  createdAt?: string
+  updatedAt?: string
 }
 
-export interface ClassRoom {
+export interface Group {
   id: string
   name: string
+  course?: number
+  groupName?: string
+  curatorId?: string | null
+  createdAt?: string
+  updatedAt?: string
+}
+
+export interface CreateGroupRequest {
+  course: number
+  groupName: string
+}
+
+export interface UpdateGroupRequest {
   course?: number
   groupName?: string
 }
@@ -31,6 +48,15 @@ export interface AuthResponse {
   user: User
 }
 
+/** Предмет учителя: по id — groupId (одна) или groupIds (несколько); по названию — groups (массив названий групп, регистр не важен). */
+export interface CreateTeacherSubjectItem {
+  name: string
+  groupId?: string
+  groupIds?: string[]
+  /** Названия групп, например ["И14-1", "И14-2"] */
+  groups?: string[]
+}
+
 export interface CreateUserByAdminRequest {
   role: CreatableRole
   firstName: string
@@ -38,20 +64,37 @@ export interface CreateUserByAdminRequest {
   middleName?: string
   login: string
   password: string
-  /** Только для student */
+  /** Только для student: курс 1–4 */
   course?: number
-  /** Только для student */
+  /** Только для student: название группы (например И14-1), 1–32 символа */
   group?: string
+  /** Только для teacher: массив предметов (название + группы по id или по названию) */
+  subjects?: CreateTeacherSubjectItem[]
+}
+
+/** PATCH /users/:id — все поля опциональны */
+export interface UpdateUserByAdminRequest {
+  role?: CreatableRole
+  firstName?: string
+  lastName?: string
+  middleName?: string
+  login?: string
+  password?: string
+  course?: number
+  group?: string
+  subjects?: CreateTeacherSubjectItem[]
 }
 
 /** Предмет из GET /subjects */
 export interface SubjectListItem {
   id: string
   name: string
-  classRoomId: string
+  groupId: string
   teacherId: string
-  classRoom: ClassRoom
+  group: Group
   teacher: Teacher
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface Teacher {
@@ -62,7 +105,19 @@ export interface Teacher {
 }
 
 export interface SubjectsQueryParams {
-  classRoomId?: string
+  groupId?: string
+  teacherId?: string
+}
+
+export interface CreateSubjectRequest {
+  name: string
+  groupId: string
+  teacherId: string
+}
+
+export interface UpdateSubjectRequest {
+  name?: string
+  groupId?: string
   teacherId?: string
 }
 
@@ -71,9 +126,9 @@ export interface LessonItem {
   id: string
   startsAt: string
   endsAt: string
-  room?: string
+  room?: string | null
   subject: { id: string; name: string }
-  classRoom: ClassRoom
+  group: Group
   teacher: Teacher
 }
 
@@ -93,8 +148,15 @@ export interface UpdateLessonRequest {
 
 export interface ScheduleQueryParams {
   date: string // YYYY-MM-DD
-  classRoomId?: string
+  groupId?: string
   teacherId?: string
+}
+
+/** Ответ POST /schedule/import (импорт из Excel) */
+export interface ScheduleImportResponse {
+  created: number
+  skipped: number
+  errors: string[]
 }
 
 export interface ApiError {
