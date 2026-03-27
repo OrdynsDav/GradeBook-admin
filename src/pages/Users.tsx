@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { List, useTable } from '@refinedev/antd'
-import { Table, Button, Select, Space, Modal, Form, Input, InputNumber, Popconfirm, message } from 'antd'
-import { PlusOutlined, MinusCircleOutlined } from '@ant-design/icons'
+import { Table, Button, Select, Space, Modal, Form, Input, InputNumber, Popconfirm, message, AutoComplete } from 'antd'
+import { PlusOutlined, MinusCircleOutlined, SearchOutlined } from '@ant-design/icons'
 import { useGo, useOne, useUpdate, useDelete, useList } from '@refinedev/core'
 import { GroupIdsDropdown } from '@/components/GroupIdsDropdown'
 import type {
@@ -30,9 +31,23 @@ function roleLabel(role: string) {
 
 export function UsersPage() {
   const go = useGo()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [roleFilter, setRoleFilter] = useState<string>('all')
+  const [searchValue, setSearchValue] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form] = Form.useForm()
+
+  const editFromUrl = searchParams.get('edit')
+  useEffect(() => {
+    if (editFromUrl) {
+      setEditingId(editFromUrl)
+      setSearchParams((prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('edit')
+        return next
+      }, { replace: true })
+    }
+  }, [editFromUrl, setSearchParams])
 
   const { tableProps, tableQueryResult } = useTable<User>({
     resource: 'users',
@@ -41,6 +56,25 @@ export function UsersPage() {
       permanent: [{ field: 'role', operator: 'eq', value: roleFilter }],
     },
   })
+
+  const usersList = (tableProps.dataSource ?? []) as User[]
+  const searchOptions = useMemo(() => {
+    if (!searchValue.trim()) return []
+    const q = searchValue.trim().toLowerCase()
+    return usersList
+      .filter(
+        (u) =>
+          (u.firstName ?? '').toLowerCase().includes(q) ||
+          (u.lastName ?? '').toLowerCase().includes(q) ||
+          (u.middleName ?? '').toLowerCase().includes(q) ||
+          (u.login ?? '').toLowerCase().includes(q)
+      )
+      .slice(0, 10)
+      .map((u) => ({
+        value: u.id,
+        label: [u.lastName, u.firstName, u.middleName].filter(Boolean).join(' ') || u.login,
+      }))
+  }, [usersList, searchValue])
 
   const { data: userData } = useOne<User>({
     resource: 'users',
@@ -146,7 +180,28 @@ export function UsersPage() {
       <List
         title="Пользователи"
         headerButtons={
-          <Space>
+          <Space size="middle" wrap>
+            <AutoComplete
+              value={searchValue}
+              onChange={setSearchValue}
+              options={searchOptions}
+              onSelect={(userId: string) => {
+                setSearchValue('')
+                setEditingId(userId)
+              }}
+              style={{ width: 260 }}
+              
+              allowClear
+              filterOption={false}
+              notFoundContent={searchValue.trim() ? 'Ничего не найдено' : null}
+            >
+              <Input
+                prefix={<SearchOutlined style={{ color: 'rgba(0,0,0,0.25)' }} />}
+                allowClear
+                style={{ paddingLeft: 10 }}
+                placeholder="Поиск (ФИО, логин)"
+              />
+            </AutoComplete>
             <Select
               value={roleFilter}
               onChange={setRoleFilter}

@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useGo } from '@refinedev/core'
 import { Create, useForm } from '@refinedev/antd'
 import { Form, Input, Select, InputNumber, Button, Space } from 'antd'
@@ -26,6 +27,15 @@ export function CreateUserPage() {
     },
   })
   const role = Form.useWatch('role', form)
+
+  useEffect(() => {
+    if (role !== 'teacher' && role !== 'student') return
+    const prefix = role === 'teacher' ? 'teacher-' : 'student-'
+    const current = form.getFieldValue('login')
+    if (current === undefined || current === '' || current === 'teacher-' || current === 'student-') {
+      form.setFieldValue('login', prefix)
+    }
+  }, [role, form])
 
   const { data: groupsData } = useList<Group>({ resource: 'groups' })
   const groups: Group[] = groupsData?.data ?? []
@@ -58,7 +68,7 @@ export function CreateUserPage() {
           name="role"
           label="Роль"
           rules={[{ required: true }]}
-          initialValue="student"
+          initialValue="teacher"
         >
           <Select options={roleOptions} />
         </Form.Item>
@@ -74,6 +84,7 @@ export function CreateUserPage() {
         <Form.Item
           name="login"
           label="Логин"
+          initialValue="teacher-"
           rules={[
             { required: true },
             { pattern: /^[a-zA-Z0-9._-]{3,64}$/, message: '3–64 символа, только a-zA-Z0-9._-' },

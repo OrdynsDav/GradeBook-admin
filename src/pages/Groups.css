@@ -1,0 +1,13 @@
+/* Увеличенные отступы у кнопок «Курс 1», «Курс 2» и стрелок в пагинации групп */
+.groups-course-pagination .ant-pagination-item,
+.groups-course-pagination .ant-pagination-prev,
+.groups-course-pagination .ant-pagination-next {
+  min-width: 56px;
+  padding-left: 18px !important;
+  padding-right: 18px !important;
+  margin-inline-end: 12px !important;
+}
+.groups-course-pagination .ant-pagination-item a {
+  padding-left: 0;
+  padding-right: 0;
+}

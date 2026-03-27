@@ -1,8 +1,8 @@
 import axios, { type AxiosInstance } from 'axios'
 import { getAccessToken, clearAuth } from './auth'
 
-export const API_BASE_URL = 'https://gradebook-backend-xhw2.onrender.com/api/v1'
-/* export const API_BASE_URL = 'http://localhost:3000/api/v1' */
+/* export const API_BASE_URL = 'https://gradebook-backend-xhw2.onrender.com/api/v1' */
+export const API_BASE_URL = 'http://localhost:3000/api/v1'
 
 export const api: AxiosInstance = axios.create({
   baseURL: API_BASE_URL,
@@ -34,6 +34,9 @@ api.interceptors.response.use(
 )
 
 type ScheduleImportResponse = import('@/types/api').ScheduleImportResponse
+type GradeItem = import('@/types/api').GradeItem
+type CreateGradeRequest = import('@/types/api').CreateGradeRequest
+type UpdateGradeRequest = import('@/types/api').UpdateGradeRequest
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -99,4 +102,29 @@ export async function importScheduleFromExcel(
     throw Object.assign(new Error(data?.message ?? 'Ошибка импорта'), { response: { data } })
   }
   return data
+}
+
+export async function getSubjectGrades(subjectId: string): Promise<GradeItem[]> {
+  const { data } = await api.get<GradeItem[]>(`/subjects/${subjectId}/grades`)
+  return data ?? []
+}
+
+export async function createSubjectGrade(
+  subjectId: string,
+  payload: CreateGradeRequest
+): Promise<GradeItem> {
+  const { data } = await api.post<GradeItem>(`/subjects/${subjectId}/grades`, payload)
+  return data
+}
+
+export async function updateGrade(
+  gradeId: string,
+  payload: UpdateGradeRequest
+): Promise<GradeItem> {
+  const { data } = await api.patch<GradeItem>(`/grades/${gradeId}`, payload)
+  return data
+}
+
+export async function deleteGrade(gradeId: string): Promise<void> {
+  await api.delete(`/grades/${gradeId}`)
 }

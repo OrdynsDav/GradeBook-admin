@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useCallback } from 'react'
 import { useList, useCreate, useUpdate, useDelete } from '@refinedev/core'
 import { List, useTable } from '@refinedev/antd'
-import { Table, Button, DatePicker, Space, Modal, Form, Select, Input, TimePicker, message, Tooltip } from 'antd'
+import { Table, Button, DatePicker, Space, Modal, Form, Select, Input, TimePicker, message, Tooltip, Popconfirm } from 'antd'
 import dayjs, { type Dayjs } from 'dayjs'
 import type { LessonItem, SubjectListItem, CreateLessonRequest } from '@/types/api'
 import { importScheduleFromExcel } from '@/lib/api'
@@ -33,7 +33,6 @@ export function SchedulePage() {
 
   const [newRows, setNewRows] = useState<DraftLesson[]>([])
   const [modified, setModified] = useState<Record<string, Partial<CreateLessonRequest>>>({})
-  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set())
   const [importLoading, setImportLoading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -59,12 +58,9 @@ export function SchedulePage() {
   const mutateDelete = useDelete()
 
   const serverList = (tableProps.dataSource ?? []) as unknown as LessonItem[]
-  const displayList: LessonRow[] = useMemo(() => {
-    const fromServer = serverList.filter((r) => !deletedIds.has(r.id))
-    return [...fromServer, ...newRows]
-  }, [serverList, deletedIds, newRows])
+  const displayList: LessonRow[] = useMemo(() => [...serverList, ...newRows], [serverList, newRows])
 
-  const hasChanges = newRows.length > 0 || Object.keys(modified).length > 0 || deletedIds.size > 0
+  const hasChanges = newRows.length > 0 || Object.keys(modified).length > 0
 
   const subjectName = Form.useWatch('subjectName', form)
   const subjectNameOptions = useMemo(() => {
@@ -213,26 +209,30 @@ export function SchedulePage() {
   const handleDeleteRow = useCallback((row: LessonRow) => {
     if (isDraft(row)) {
       setNewRows((prev) => prev.filter((r) => r.id !== row.id))
-    } else {
-      setDeletedIds((prev) => new Set(prev).add(row.id))
     }
   }, [])
 
+  const handleDeleteServerLesson = useCallback(
+    (id: string) => {
+      mutateDelete.mutate(
+        { resource: 'schedule', id },
+        {
+          onSuccess: () => {
+            tableQueryResult?.refetch()
+            message.success('Урок удалён')
+          },
+          onError: (e: unknown) => {
+            const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message ?? 'Ошибка удаления'
+            message.error(msg)
+          },
+        }
+      )
+    },
+    [mutateDelete, tableQueryResult]
+  )
+
   const handleSave = () => {
     const promises: Promise<unknown>[] = []
-    deletedIds.forEach((id) => {
-      promises.push(
-        new Promise((resolve, reject) => {
-          mutateDelete.mutate(
-            { resource: 'schedule', id },
-            {
-              onSuccess: () => resolve(undefined),
-              onError: (e: unknown) => reject(e),
-            }
-          )
-        })
-      )
-    })
     Object.entries(modified).forEach(([id, vars]) => {
       promises.push(
         new Promise((resolve, reject) => {
@@ -271,7 +271,6 @@ export function SchedulePage() {
       .then(() => {
         setNewRows([])
         setModified({})
-        setDeletedIds(new Set())
         tableQueryResult?.refetch()
         message.success('Изменения сохранены')
       })
@@ -291,7 +290,6 @@ export function SchedulePage() {
     setDate(d.format('YYYY-MM-DD'))
     setNewRows([])
     setModified({})
-    setDeletedIds(new Set())
     setCreateModalOpen(false)
     setEditingRow(null)
     form.resetFields()
@@ -360,14 +358,28 @@ export function SchedulePage() {
             <Button size="small" onClick={() => openEdit(record)}>
               Изменить
             </Button>
-            <Button size="small" danger onClick={() => handleDeleteRow(record)}>
-              Удалить
-            </Button>
+            {isDraft(record) ? (
+              <Button size="small" danger onClick={() => handleDeleteRow(record)}>
+                Удалить
+              </Button>
+            ) : (
+              <Popconfirm
+                title="Удалить урок?"
+                onConfirm={() => handleDeleteServerLesson(record.id)}
+                okText="Удалить"
+                cancelText="Отмена"
+                okButtonProps={{ danger: true }}
+              >
+                <Button size="small" danger>
+                  Удалить
+                </Button>
+              </Popconfirm>
+            )}
           </Space>
         ),
       },
     ],
-    [openEdit, handleDeleteRow]
+    [openEdit, handleDeleteRow, handleDeleteServerLesson]
   )
 
   return (

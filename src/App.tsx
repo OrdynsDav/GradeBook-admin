@@ -24,6 +24,7 @@ const i18nProvider = {
 }
 
 import { dataProvider } from '@/dataProvider'
+import { AppHeader } from '@/components/AppHeader'
 import { Login } from '@/pages/Login'
 import { DashboardPage } from '@/pages/Dashboard'
 import { CreateUserPage } from '@/pages/CreateUser'
@@ -54,7 +55,7 @@ function App() {
           <Route
             element={
               <Authenticated key="app" fallback={<Navigate to="/login" replace />}>
-                <ThemedLayoutV2>
+                <ThemedLayoutV2 Header={AppHeader}>
                   <Outlet />
                 </ThemedLayoutV2>
               </Authenticated>

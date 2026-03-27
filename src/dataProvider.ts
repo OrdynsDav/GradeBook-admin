@@ -88,6 +88,18 @@ export const dataProvider: DataProvider = {
       const { data } = await api.get<User>(`/users/${id}`)
       return { data: data as any }
     }
+    if (resource === 'groups') {
+      const { data } = await api.get<import('@/types/api').Group>(`/groups/${id}`)
+      return { data: data as any }
+    }
+    if (resource === 'subjects') {
+      const { data } = await api.get<SubjectListItem>(`/subjects/${id}`)
+      return { data: data as any }
+    }
+    if (resource === 'schedule') {
+      const { data } = await api.get<LessonItem>(`/schedule/${id}`)
+      return { data: data as any }
+    }
     return { data: {} as any }
   },
 
@@ -198,6 +210,10 @@ export const dataProvider: DataProvider = {
   deleteOne: async ({ resource, id }) => {
     if (resource === 'users') {
       await api.delete(`/users/${id}`)
+      return { data: {} as any }
+    }
+    if (resource === 'groups') {
+      await api.delete(`/groups/${id}`)
       return { data: {} as any }
     }
     if (resource === 'subjects') {

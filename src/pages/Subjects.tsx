@@ -1,10 +1,10 @@
 import { useState, useMemo } from 'react'
 import { useList, useCreate, useUpdate, useDelete } from '@refinedev/core'
 import { List, useTable } from '@refinedev/antd'
-import { Table, Button, Input, Select, Space, Modal, Form, message } from 'antd'
+import { Table, Button, Input, Select, Space, Modal, Form, message, InputNumber, Popconfirm } from 'antd'
 import { FilterOutlined } from '@ant-design/icons'
-import { GroupIdsDropdown } from '@/components/GroupIdsDropdown'
-import type { SubjectListItem, Group, Teacher } from '@/types/api'
+import { createSubjectGrade, deleteGrade, getSubjectGrades } from '@/lib/api'
+import type { SubjectListItem, Group, Teacher, User, GradeItem } from '@/types/api'
 
 type DraftSubject = {
   id: string
@@ -49,25 +49,33 @@ export function SubjectsPage() {
 
   const [filterModalOpen, setFilterModalOpen] = useState(false)
   const [filterName, setFilterName] = useState<string | null>(null)
-  const [filterCourse, setFilterCourse] = useState<number | null>(null)
   const [filterTeacherId, setFilterTeacherId] = useState<string | null>(null)
+  const [gradeModalOpen, setGradeModalOpen] = useState(false)
+  const [gradeSubject, setGradeSubject] = useState<SubjectListItem | null>(null)
+  const [historyModalOpen, setHistoryModalOpen] = useState(false)
+  const [historySubject, setHistorySubject] = useState<SubjectListItem | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyGrades, setHistoryGrades] = useState<GradeItem[]>([])
+  const [sessionGradesBySubject, setSessionGradesBySubject] = useState<Record<string, GradeItem[]>>({})
+  const [gradeSubmitting, setGradeSubmitting] = useState(false)
+  const [gradeForm] = Form.useForm<{
+    groupId?: string
+    studentIds: string[]
+    value: number
+    comment?: string
+    gradedAt?: string
+  }>()
 
   const serverList = (tableProps.dataSource ?? []) as SubjectListItem[]
 
   const { data: teachersFromApi } = useList<Teacher>({
     resource: 'teachers',
   })
+  const { data: usersFromApi } = useList<User>({
+    resource: 'users',
+  })
   const { data: groupsFromApi } = useList<Group>({ resource: 'groups' })
-
-  const groups = useMemo(() => {
-    const fromApi = groupsFromApi?.data ?? []
-    if (fromApi.length > 0) return fromApi
-    const map = new Map<string, Group>()
-    serverList.forEach((s) => {
-      if (s.group?.id) map.set(s.group.id, s.group)
-    })
-    return Array.from(map.values())
-  }, [serverList, groupsFromApi?.data])
+  const groups = (groupsFromApi?.data ?? []) as Group[]
 
   const teachers = useMemo(() => {
     const fromApi = teachersFromApi?.data ?? []
@@ -86,31 +94,37 @@ export function SubjectsPage() {
     return Array.from(names).sort()
   }, [serverList, newRows])
 
-  const courseOptions = [1, 2, 3, 4]
+  const students = useMemo(() => {
+    return ((usersFromApi?.data ?? []) as User[]).filter((u) => u.role === 'student')
+  }, [usersFromApi?.data])
 
-  const baseDisplayList: SubjectRow[] = [
-    ...serverList.filter((r) => !deletedIds.has(r.id)),
-    ...newRows,
-  ]
+  const studentNameById = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const s of students) {
+      map.set(s.id, [s.lastName, s.firstName, s.middleName].filter(Boolean).join(' '))
+    }
+    return map
+  }, [students])
+
+  const serverListDeduped = useMemo(() => {
+    const filtered = serverList.filter((r) => !deletedIds.has(r.id))
+    const seen = new Set<string>()
+    return filtered.filter((row) => {
+      const name = (row.name ?? '').trim()
+      const teacherId = row.teacherId ?? row.teacher?.id ?? ''
+      const key = `${name}|${teacherId}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+  }, [serverList, deletedIds])
+
+  const baseDisplayList: SubjectRow[] = [...serverListDeduped, ...newRows]
 
   const displayList = useMemo(() => {
     let list = baseDisplayList
     if (filterName != null && filterName !== '') {
       list = list.filter((row) => (modified[row.id]?.name ?? (row as SubjectListItem).name ?? (row as DraftSubject).name ?? '').trim() === filterName)
-    }
-    if (filterCourse != null) {
-      list = list.filter((row) => {
-        const mod = modified[row.id]
-        let course: number | undefined
-        if (mod?.groupIds?.length) course = groups.find((g) => g.id === mod.groupIds![0])?.course
-        else if (mod?.groupId) course = groups.find((g) => g.id === mod.groupId)?.course
-        else if ((row as SubjectListItem).group?.course != null) course = (row as SubjectListItem).group!.course
-        else if ((row as SubjectListItem).group?.id) course = groups.find((g) => g.id === (row as SubjectListItem).group!.id)?.course
-        else if ((row as DraftSubject).groupIds?.length) course = groups.find((g) => g.id === (row as DraftSubject).groupIds![0])?.course
-        else if ((row as DraftSubject).group?.course != null) course = (row as DraftSubject).group!.course
-        else if ((row as DraftSubject).group?.id) course = groups.find((g) => g.id === (row as DraftSubject).group!.id)?.course
-        return course === filterCourse
-      })
     }
     if (filterTeacherId != null && filterTeacherId !== '') {
       list = list.filter((row) => {
@@ -119,25 +133,11 @@ export function SubjectsPage() {
       })
     }
     return list
-  }, [baseDisplayList, filterName, filterCourse, filterTeacherId, modified, groups])
+  }, [baseDisplayList, filterName, filterTeacherId, modified])
 
-  const hasActiveFilters = filterName != null || filterCourse != null || (filterTeacherId != null && filterTeacherId !== '')
+  const hasActiveFilters = filterName != null || (filterTeacherId != null && filterTeacherId !== '')
 
   const hasChanges = newRows.length > 0 || Object.keys(modified).length > 0 || deletedIds.size > 0
-
-  const getDisplayGroup = (row: SubjectRow) => {
-    const mod = modified[row.id]
-    if (mod?.groupIds?.length) {
-      return mod.groupIds.map((id) => groups.find((g) => g.id === id)?.name).filter(Boolean).join(', ')
-    }
-    if (mod?.groupId) return groups.find((g) => g.id === mod.groupId)?.name
-    const draft = row as DraftSubject
-    if (draft.groupIds?.length) {
-      return draft.groupIds.map((id) => groups.find((g) => g.id === id)?.name).filter(Boolean).join(', ')
-    }
-    if (draft.groups?.length) return draft.groups.map((g) => g.name).join(', ')
-    return row.group?.name ?? (row as SubjectListItem).group?.name
-  }
 
   const getDisplayTeacher = (row: SubjectRow) => {
     const mod = modified[row.id]
@@ -158,7 +158,7 @@ export function SubjectsPage() {
     setNewRows((prev) => [...prev, draft])
     setEditingId(draft.id)
     setEditName('')
-    setEditGroupIds([])
+    setEditGroupIds(groups.length > 0 ? [groups[0].id] : [])
     setEditTeacherId(undefined)
   }
 
@@ -167,12 +167,8 @@ export function SubjectsPage() {
     const mod = modified[row.id]
     setEditName(mod?.name ?? row.name ?? '')
     const draft = row as DraftSubject
-    setEditGroupIds(
-      mod?.groupIds ??
-        (mod?.groupId ? [mod.groupId] : null) ??
-        draft.groupIds ??
-        (draft.group?.id ? [draft.group.id] : (row as SubjectListItem).groupId ? [(row as SubjectListItem).groupId] : [])
-    )
+    const currentGroupId = (row as SubjectListItem).groupId ?? draft.groupId ?? draft.group?.id ?? (draft.groupIds?.[0])
+    setEditGroupIds(currentGroupId ? [currentGroupId] : groups.length > 0 ? [groups[0].id] : [])
     setEditTeacherId(
       mod?.teacherId ?? row.teacher?.id ?? (row as SubjectListItem).teacherId
     )
@@ -188,13 +184,13 @@ export function SubjectsPage() {
         prev.map((r) =>
           r.id === editingId
             ? {
-                ...r,
-                name: editName,
-                groupIds: editGroupIds,
-                teacherId: editTeacherId,
-                groups: selectedGroups,
-                teacher,
-              }
+              ...r,
+              name: editName,
+              groupIds: editGroupIds,
+              teacherId: editTeacherId,
+              groups: selectedGroups,
+              teacher,
+            }
             : r
         )
       )
@@ -303,6 +299,173 @@ export function SubjectsPage() {
     }
   }
 
+  const studentsByGroup = useMemo(() => {
+    const map = new Map<string, User[]>()
+    for (const s of students) {
+      const gid = s.groupId ?? s.group?.id
+      if (!gid) continue
+      const list = map.get(gid) ?? []
+      list.push(s)
+      map.set(gid, list)
+    }
+    return map
+  }, [students])
+
+  const selectedGradeGroupId = Form.useWatch('groupId', gradeForm)
+
+  const studentsForSelectedGroup = useMemo(() => {
+    if (!selectedGradeGroupId) return []
+    return studentsByGroup.get(selectedGradeGroupId) ?? []
+  }, [selectedGradeGroupId, studentsByGroup])
+
+  const gradeGroupOptions = useMemo(() => {
+    return groups
+      .filter((g) => studentsByGroup.has(g.id))
+      .map((g) => ({
+        value: g.id,
+        label: g.name ?? g.groupName ?? 'Без названия',
+      }))
+  }, [groups, studentsByGroup])
+
+  const getGradeStudentName = (grade: GradeItem) => {
+    if (grade.student) {
+      return [grade.student.lastName, grade.student.firstName, grade.student.middleName]
+        .filter(Boolean)
+        .join(' ')
+    }
+    return studentNameById.get(grade.studentId) ?? grade.studentId
+  }
+
+  const loadHistoryGrades = async (subjectId: string) => {
+    setHistoryLoading(true)
+    try {
+      const list = await getSubjectGrades(subjectId)
+      setHistoryGrades(list)
+    } catch (e: unknown) {
+      const msg = (e as any)?.response?.data?.message ?? 'Не удалось загрузить оценки'
+      message.error(msg)
+      setHistoryGrades([])
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const handleOpenGrades = async (row: SubjectRow) => {
+    if (isDraft(row)) {
+      message.info('Сначала сохраните новый предмет, затем можно выставлять оценки')
+      return
+    }
+    const subject = row as SubjectListItem
+    setGradeSubject(subject)
+    setGradeModalOpen(true)
+    gradeForm.resetFields()
+    gradeForm.setFieldsValue({
+      groupId: subject.groupId,
+      value: 5,
+      studentIds: [],
+      gradedAt: new Date().toISOString().slice(0, 16),
+    })
+  }
+
+  const handleCloseGrades = () => {
+    setGradeModalOpen(false)
+    setGradeSubject(null)
+    gradeForm.resetFields()
+  }
+
+  const handleOpenHistory = async (row: SubjectRow) => {
+    if (isDraft(row)) {
+      message.info('Сначала сохраните новый предмет')
+      return
+    }
+    const subject = row as SubjectListItem
+    setHistorySubject(subject)
+    setHistoryModalOpen(true)
+    await loadHistoryGrades(subject.id)
+  }
+
+  const handleCloseHistory = () => {
+    setHistoryModalOpen(false)
+    setHistorySubject(null)
+    setHistoryGrades([])
+  }
+
+  const handleCreateGrade = async () => {
+    if (!gradeSubject) return
+    try {
+      const values = await gradeForm.validateFields()
+      setGradeSubmitting(true)
+      const studentIds = values.studentIds ?? []
+      if (studentIds.length === 0) {
+        message.warning('Выберите хотя бы одного ученика')
+        return
+      }
+
+      let successCount = 0
+      const createdGrades: GradeItem[] = []
+      for (const studentId of studentIds) {
+        try {
+          const created = await createSubjectGrade(gradeSubject.id, {
+            studentId,
+            value: Number(values.value),
+            comment: values.comment?.trim() || undefined,
+            gradedAt: values.gradedAt ? new Date(values.gradedAt).toISOString() : undefined,
+          })
+          successCount += 1
+          createdGrades.push(created)
+        } catch {
+          // продолжаем, чтобы попытаться выставить остальным выбранным ученикам
+        }
+      }
+
+      if (successCount === 0) {
+        message.error('Не удалось поставить оценки выбранным ученикам')
+        return
+      }
+      if (successCount < studentIds.length) {
+        message.warning(`Оценки выставлены частично: ${successCount} из ${studentIds.length}`)
+      } else {
+        message.success(`Оценки выставлены: ${successCount}`)
+      }
+      if (createdGrades.length > 0) {
+        setSessionGradesBySubject((prev) => ({
+          ...prev,
+          [gradeSubject.id]: [...createdGrades, ...(prev[gradeSubject.id] ?? [])],
+        }))
+      }
+      gradeForm.setFieldsValue({
+        studentIds: [],
+        value: 5,
+        comment: undefined,
+        gradedAt: new Date().toISOString().slice(0, 16),
+      })
+    } catch (e: unknown) {
+      const msg = (e as any)?.response?.data?.message ?? 'Не удалось добавить оценку'
+      message.error(Array.isArray(msg) ? msg.join(', ') : msg)
+    } finally {
+      setGradeSubmitting(false)
+    }
+  }
+
+  const handleDeleteGrade = async (gradeId: string) => {
+    if (!historySubject) return
+    try {
+      await deleteGrade(gradeId)
+      message.success('Оценка удалена')
+      await loadHistoryGrades(historySubject.id)
+      setSessionGradesBySubject((prev) => {
+        const current = prev[historySubject.id] ?? []
+        return {
+          ...prev,
+          [historySubject.id]: current.filter((g) => g.id !== gradeId),
+        }
+      })
+    } catch (e: unknown) {
+      const msg = (e as any)?.response?.data?.message ?? 'Не удалось удалить оценку'
+      message.error(msg)
+    }
+  }
+
   const isEditing = (row: SubjectRow) => editingId === row.id
 
   return (
@@ -362,22 +525,6 @@ export function SubjectsPage() {
               ),
           },
           {
-            title: 'Группы',
-            key: 'group',
-            render: (_, row) =>
-              isEditing(row) ? (
-                <GroupIdsDropdown
-                  groups={groups}
-                  value={editGroupIds}
-                  onChange={setEditGroupIds}
-                  placeholder="Группы (несколько)"
-                  style={{ minWidth: 200 }}
-                />
-              ) : (
-                getDisplayGroup(row) ?? '—'
-              ),
-          },
-          {
             title: 'Учитель',
             key: 'teacher',
             render: (_, row) =>
@@ -418,6 +565,12 @@ export function SubjectsPage() {
                     <Button size="small" onClick={() => handleStartEdit(record)}>
                       Изменить
                     </Button>
+                    <Button size="small" type="primary" onClick={() => handleOpenGrades(record)}>
+                      Оценки
+                    </Button>
+                    <Button size="small" onClick={() => handleOpenHistory(record)}>
+                      История
+                    </Button>
                     <Button size="small" danger onClick={() => handleDeleteRow(record)}>
                       Удалить
                     </Button>
@@ -434,7 +587,7 @@ export function SubjectsPage() {
         open={filterModalOpen}
         onCancel={() => setFilterModalOpen(false)}
         footer={[
-          <Button key="reset" onClick={() => { setFilterName(null); setFilterCourse(null); setFilterTeacherId(null); setFilterModalOpen(false); }}>
+          <Button key="reset" onClick={() => { setFilterName(null); setFilterTeacherId(null); setFilterModalOpen(false); }}>
             Сбросить
           </Button>,
           <Button key="apply" type="primary" onClick={() => setFilterModalOpen(false)}>
@@ -453,16 +606,6 @@ export function SubjectsPage() {
               style={{ width: '100%' }}
             />
           </Form.Item>
-          <Form.Item label="По курсу">
-            <Select
-              placeholder="Все курсы"
-              allowClear
-              value={filterCourse ?? undefined}
-              onChange={(v) => setFilterCourse(v ?? null)}
-              options={courseOptions.map((c) => ({ value: c, label: `${c} курс` }))}
-              style={{ width: '100%' }}
-            />
-          </Form.Item>
           <Form.Item label="По учителю">
             <Select
               placeholder="Все учителя"
@@ -476,6 +619,179 @@ export function SubjectsPage() {
             />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={
+          gradeSubject
+            ? `Оценки: ${gradeSubject.name} (${teacherLabel(gradeSubject.teacher)})`
+            : 'Оценки'
+        }
+        open={gradeModalOpen}
+        onCancel={handleCloseGrades}
+        footer={null}
+        width={900}
+        destroyOnClose
+      >
+        {gradeSubject && (
+          <>
+            <Form
+              form={gradeForm}
+              layout="vertical"
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 8,
+                background: 'rgba(0,0,0,0.02)',
+              }}
+            >
+              <Space align="start" wrap style={{ width: '100%' }}>
+                <Form.Item
+                  name="groupId"
+                  label="Группа"
+                  rules={[{ required: true, message: 'Выберите группу' }]}
+                  style={{ minWidth: 220, marginBottom: 8 }}
+                >
+                  <Select
+                    placeholder="Выберите группу"
+                    showSearch
+                    optionFilterProp="label"
+                    onChange={() => gradeForm.setFieldValue('studentIds', [])}
+                    options={gradeGroupOptions}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="studentIds"
+                  label="Ученики"
+                  rules={[{ required: true, message: 'Выберите хотя бы одного ученика' }]}
+                  style={{ minWidth: 280, marginBottom: 8 }}
+                >
+                  <Select
+                    mode="multiple"
+                    placeholder="Выберите учеников"
+                    showSearch
+                    optionFilterProp="label"
+                    options={studentsForSelectedGroup.map((s) => ({
+                      value: s.id,
+                      label: [s.lastName, s.firstName, s.middleName].filter(Boolean).join(' '),
+                    }))}
+                  />
+                </Form.Item>
+                <Form.Item
+                  name="value"
+                  label="Оценка"
+                  rules={[
+                    { required: true, message: 'Укажите оценку' },
+                    { type: 'number', min: 2, max: 5, message: 'Оценка должна быть от 2 до 5' },
+                  ]}
+                  style={{ width: 120, marginBottom: 8 }}
+                >
+                  <InputNumber min={2} max={5} precision={0} style={{ width: '100%' }} />
+                </Form.Item>
+                <Form.Item
+                  name="gradedAt"
+                  label="Дата и время"
+                  style={{ minWidth: 220, marginBottom: 8 }}
+                >
+                  <Input type="datetime-local" />
+                </Form.Item>
+              </Space>
+              <Form.Item name="comment" label="Комментарий" style={{ marginBottom: 8 }}>
+                <Input.TextArea rows={2} maxLength={500} placeholder="Комментарий к оценке" />
+              </Form.Item>
+              <Space>
+                <Button type="primary" onClick={handleCreateGrade} loading={gradeSubmitting}>
+                  Поставить оценку
+                </Button>
+                <Button onClick={() => gradeForm.resetFields()}>Очистить форму</Button>
+              </Space>
+            </Form>
+
+            <Table<GradeItem>
+              rowKey="id"
+              dataSource={gradeSubject ? sessionGradesBySubject[gradeSubject.id] ?? [] : []}
+              pagination={{ pageSize: 8 }}
+              style={{ marginTop: 12 }}
+              columns={[
+                {
+                  title: 'Ученик',
+                  key: 'student',
+                  render: (_, g) => getGradeStudentName(g),
+                },
+                { title: 'Оценка', dataIndex: 'value', key: 'value', width: 90 },
+                {
+                  title: 'Комментарий',
+                  dataIndex: 'comment',
+                  key: 'comment',
+                  render: (val) => val || '—',
+                },
+                {
+                  title: 'Дата',
+                  dataIndex: 'gradedAt',
+                  key: 'gradedAt',
+                  width: 180,
+                  render: (val: string) => (val ? new Date(val).toLocaleString('ru-RU') : '—'),
+                },
+              ]}
+            />
+          </>
+        )}
+      </Modal>
+
+      <Modal
+        title={
+          historySubject
+            ? `История оценок: ${historySubject.name} (${teacherLabel(historySubject.teacher)})`
+            : 'История оценок'
+        }
+        open={historyModalOpen}
+        onCancel={handleCloseHistory}
+        footer={null}
+        width={900}
+        destroyOnClose
+      >
+        <Table<GradeItem>
+          rowKey="id"
+          loading={historyLoading}
+          dataSource={historyGrades}
+          pagination={{ pageSize: 10 }}
+          columns={[
+            {
+              title: 'Ученик',
+              key: 'student',
+              render: (_, g) => getGradeStudentName(g),
+            },
+            { title: 'Оценка', dataIndex: 'value', key: 'value', width: 90 },
+            {
+              title: 'Комментарий',
+              dataIndex: 'comment',
+              key: 'comment',
+              render: (val) => val || '—',
+            },
+            {
+              title: 'Дата',
+              dataIndex: 'gradedAt',
+              key: 'gradedAt',
+              width: 180,
+              render: (val: string) => (val ? new Date(val).toLocaleString('ru-RU') : '—'),
+            },
+            {
+              title: '',
+              key: 'actions',
+              width: 110,
+              render: (_, g) => (
+                <Popconfirm
+                  title="Удалить оценку?"
+                  onConfirm={() => handleDeleteGrade(g.id)}
+                >
+                  <Button size="small" danger>
+                    Удалить
+                  </Button>
+                </Popconfirm>
+              ),
+            },
+          ]}
+        />
       </Modal>
     </List>
   )

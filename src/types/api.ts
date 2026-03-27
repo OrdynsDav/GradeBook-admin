@@ -1,4 +1,4 @@
-/** Типы для API админ-панели GradeBook */
+/** Типы для API админ-панели GradeBook (соответствие документации API) */
 
 export type CreatableRole = 'student' | 'teacher'
 
@@ -21,6 +21,7 @@ export interface User {
   updatedAt?: string
 }
 
+/** Группа: GET /groups, GET /groups/:id */
 export interface Group {
   id: string
   name: string
@@ -30,6 +31,9 @@ export interface Group {
   createdAt?: string
   updatedAt?: string
 }
+
+/** Алиас для совместимости с докой (GroupListItem) */
+export type GroupListItem = Group
 
 export interface CreateGroupRequest {
   course: number
@@ -85,7 +89,7 @@ export interface UpdateUserByAdminRequest {
   subjects?: CreateTeacherSubjectItem[]
 }
 
-/** Предмет из GET /subjects */
+/** Предмет: GET /subjects, GET /subjects/:id */
 export interface SubjectListItem {
   id: string
   name: string
@@ -97,6 +101,7 @@ export interface SubjectListItem {
   updatedAt?: string
 }
 
+/** Учитель (вложенный в предмет/урок и из GET /users по role=teacher) */
 export interface Teacher {
   id: string
   firstName: string
@@ -121,7 +126,7 @@ export interface UpdateSubjectRequest {
   teacherId?: string
 }
 
-/** Урок в расписании */
+/** Урок: GET /schedule/day, GET /schedule/week, GET /schedule/:id, POST/PATCH ответы */
 export interface LessonItem {
   id: string
   startsAt: string
@@ -146,6 +151,7 @@ export interface UpdateLessonRequest {
   room?: string
 }
 
+/** GET /schedule/day, /schedule/week — query-параметры */
 export interface ScheduleQueryParams {
   date: string // YYYY-MM-DD
   groupId?: string
@@ -163,4 +169,40 @@ export interface ApiError {
   statusCode: number
   message: string
   error?: string
+}
+
+/** Оценки: GET /subjects/:id/grades */
+export interface GradeItem {
+  id: string
+  subjectId: string
+  studentId: string
+  value: number
+  comment?: string | null
+  gradedAt: string
+  createdAt?: string
+  updatedAt?: string
+  student?: Pick<User, 'id' | 'firstName' | 'lastName' | 'middleName' | 'groupId'>
+  subject?: Pick<SubjectListItem, 'id' | 'name' | 'teacherId' | 'groupId'>
+  teacher?: Teacher
+}
+
+/** POST /subjects/:id/grades */
+export interface CreateGradeRequest {
+  studentId: string
+  value: number
+  comment?: string
+  gradedAt?: string
+  /**
+   * Для admin: опционально поставить оценку от имени конкретного преподавателя.
+   * Поле поддерживается backend-ом при соответствующей реализации.
+   */
+  teacherId?: string
+}
+
+/** PATCH /grades/:id */
+export interface UpdateGradeRequest {
+  value?: number
+  comment?: string
+  gradedAt?: string
+  teacherId?: string
 }
